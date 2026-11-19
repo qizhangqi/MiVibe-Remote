@@ -251,9 +251,63 @@ enum KeyboardInjector {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.createsNewApplicationInstance = false
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { runningApplication, error in
             completion(error)
+            if error == nil, application == .claude || application == .codex,
+               let pid = runningApplication?.processIdentifier {
+                focusPromptInput(pid: pid, bundleIdentifier: application.bundleIdentifier, attempt: 0)
+            }
         }
+    }
+
+    /// Local addition: after 打开 Claude / 打开 Codex, put the caret in the
+    /// prompt box so the voice key can dictate right away. Retries with a
+    /// growing delay (~5 s total) to cover a cold launch.
+    private static func focusPromptInput(pid: pid_t, bundleIdentifier: String, attempt: Int) {
+        guard attempt < 8, isAccessibilityTrusted else { return }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.15 * Double(attempt + 1)) {
+            let axApp = AXUIElementCreateApplication(pid)
+            // Electron builds its web accessibility tree only when a client asks.
+            AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            guard let window = axAttribute(axApp, kAXFocusedWindowAttribute),
+                  let input = promptInput(in: window as! AXUIElement)
+            else {
+                focusPromptInput(pid: pid, bundleIdentifier: bundleIdentifier, attempt: attempt + 1)
+                return
+            }
+            let result = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            AppLogger.shared.write(
+                "APP ACTION focus_prompt bundle=\(bundleIdentifier) attempt=\(attempt) result=\(result.rawValue)"
+            )
+        }
+    }
+
+    /// Claude labels its prompt box "Prompt"; otherwise take the lowest text area.
+    private static func promptInput(in window: AXUIElement) -> AXUIElement? {
+        var queue = [window]
+        var index = 0
+        var lowest: (element: AXUIElement, y: CGFloat)?
+        while index < queue.count, index < 8000 {
+            let element = queue[index]
+            index += 1
+            if axAttribute(element, kAXRoleAttribute) as? String == kAXTextAreaRole {
+                if axAttribute(element, kAXDescriptionAttribute) as? String == "Prompt" { return element }
+                var point = CGPoint.zero
+                if let position = axAttribute(element, kAXPositionAttribute) {
+                    AXValueGetValue(position as! AXValue, .cgPoint, &point)
+                }
+                if lowest == nil || point.y > lowest!.y { lowest = (element, point.y) }
+            }
+            if let children = axAttribute(element, kAXChildrenAttribute) as? [AXUIElement] {
+                queue.append(contentsOf: children)
+            }
+        }
+        return lowest?.element
+    }
+
+    private static func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
 
     private static func postKey(code: CGKeyCode, flags: CGEventFlags = []) {
