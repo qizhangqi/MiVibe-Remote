@@ -123,7 +123,7 @@ enum RemoteKeyHardwareSuppressionPolicy {
             usageValue = 0x7F
         case .disabled, .scrollUp, .scrollDown, .showDesktop, .appSwitcher, .playPause, .customShortcut, .cyclePreset,
              .openRemoteMic, .openCodex, .openWorkBuddy, .openClaude, .openCmux, .openWeChat, .openCursor,
-             .openXcode, .openSlack, .openWeCom, .openNeteaseMusic, .openChrome, .openSafari,
+             .openXcode, .openSlack, .openWeCom, .openNeteaseMusic, .openChrome, .openChromeBeta, .openSafari,
              .openZed:
             return nil
         }

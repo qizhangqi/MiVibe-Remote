@@ -232,6 +232,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
     case weCom
     case neteaseMusic
     case chrome
+    case chromeBeta
     case safari
     case zed
 
@@ -251,6 +252,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
         case .weCom: return "企业微信"
         case .neteaseMusic: return "网易云音乐"
         case .chrome: return "Chrome"
+        case .chromeBeta: return "Chrome Beta"
         case .safari: return "Safari"
         case .zed: return "Zed"
         }
@@ -270,6 +272,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
         case .weCom: return "com.tencent.WeWorkMac"
         case .neteaseMusic: return "com.netease.163music"
         case .chrome: return "com.google.Chrome"
+        case .chromeBeta: return "com.google.Chrome.beta"
         case .safari: return "com.apple.Safari"
         case .zed: return "dev.zed.Zed"
         }
@@ -317,6 +320,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
     case openWeCom
     case openNeteaseMusic
     case openChrome
+    case openChromeBeta
     case openSafari
     case openZed
 
@@ -355,6 +359,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         case .openWeCom: return "打开企业微信"
         case .openNeteaseMusic: return "打开网易云音乐"
         case .openChrome: return "打开 Chrome"
+        case .openChromeBeta: return "打开 Chrome Beta"
         case .openSafari: return "打开 Safari"
         case .openZed: return "打开 Zed"
         }
@@ -374,6 +379,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         case .openWeCom: return .weCom
         case .openNeteaseMusic: return .neteaseMusic
         case .openChrome: return .chrome
+        case .openChromeBeta: return .chromeBeta
         case .openSafari: return .safari
         case .openZed: return .zed
         default: return nil

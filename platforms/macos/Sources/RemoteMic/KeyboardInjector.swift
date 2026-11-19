@@ -216,7 +216,7 @@ enum KeyboardInjector {
                 }
             }
         case .cyclePreset, .openRemoteMic, .openCodex, .openWorkBuddy, .openClaude, .openCmux, .openWeChat, .openCursor, .openXcode,
-             .openSlack, .openWeCom, .openNeteaseMusic, .openChrome, .openSafari, .openZed:
+             .openSlack, .openWeCom, .openNeteaseMusic, .openChrome, .openChromeBeta, .openSafari, .openZed:
             break
         }
         return true

@@ -22,6 +22,7 @@ struct RemoteButtonsTests {
             "企业微信": "com.tencent.WeWorkMac",
             "网易云音乐": "com.netease.163music",
             "Chrome": "com.google.Chrome",
+            "Chrome Beta": "com.google.Chrome.beta",
             "Safari": "com.apple.Safari",
             "Zed": "dev.zed.Zed",
         ])
