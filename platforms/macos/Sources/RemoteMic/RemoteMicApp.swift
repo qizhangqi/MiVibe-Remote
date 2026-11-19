@@ -40,7 +40,7 @@ enum RemoteMicApp {
 
 @MainActor
 private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
-    NSMenuItemValidation {
+    NSMenuItemValidation, NSWindowDelegate {
     private let model = BridgeAppModel()
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
@@ -290,7 +290,16 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         window.minSize = NSSize(width: 800, height: 650)
         window.setFrameAutosaveName("RemoteMicSettings")
         window.center()
+        window.delegate = self
         return NSWindowController(window: window)
+    }
+
+    /// Local change: release the settings window and its SwiftUI tree once it
+    /// closes (measured: live heap 70 MB -> 10 MB, footprint 144 MB -> 105 MB);
+    /// showSettings() rebuilds it on the next open.
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === settingsWindowController?.window else { return }
+        settingsWindowController = nil
     }
 
     @objc private func showLog() {
