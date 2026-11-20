@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -62,5 +63,79 @@ struct AppLifecycleTests {
         #expect(appSource.contains("model.recoverHIDSettingsAfterActivation()"))
         #expect(infoPlist.contains("<key>LSUIElement</key>"))
         #expect(infoPlist.contains("<false/>"))
+    }
+
+    @Test func settingsWindowIsRebuiltOnOpenAndKeepsItsSavedPosition() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/RemoteMicApp.swift"),
+            encoding: .utf8
+        )
+        let settingsSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/SettingsView.swift"),
+            encoding: .utf8
+        )
+
+        // Closing releases the window; the next open builds a new one.
+        #expect(appSource.contains("settingsWindowController = nil"))
+        #expect(appSource.contains(
+            "settingsWindowController = makeSettingsWindowController(showingAbout: showingAbout)"
+        ))
+        // The rebuilt window is centered first, then the autosave name restores
+        // the saved frame (see windowFrameAutosaveOnlyWinsWhenSetAfterCentering).
+        let center = try #require(appSource.range(of: "window.center()"))
+        let autosave = try #require(appSource.range(of: "window.setFrameAutosaveName(\"RemoteMicSettings\")"))
+        #expect(center.upperBound <= autosave.lowerBound)
+        // "About" opens on the About page, even when the window was closed.
+        #expect(appSource.contains("showSettingsWindow(showingAbout: true)"))
+        #expect(appSource.contains("showsAboutInitially: showingAbout"))
+        #expect(settingsSource.contains("showsAboutInitially ? .about : .connection"))
+    }
+
+    @MainActor
+    @Test func windowFrameAutosaveOnlyWinsWhenSetAfterCentering() throws {
+        let name = "RemoteMicTests.settingsFrame.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+        func makeWindow(centerBeforeAutosave: Bool) -> NSWindow {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: true
+            )
+            window.isReleasedWhenClosed = false
+            if centerBeforeAutosave {
+                window.center()
+                window.setFrameAutosaveName(name)
+            } else {
+                window.setFrameAutosaveName(name)
+                window.center()
+            }
+            return window
+        }
+        // The user moved the first window; AppKit saved its frame. Keep it on
+        // the display the window opened on: a frame saved on another display
+        // is mapped to the same relative position on the current one.
+        let first = makeWindow(centerBeforeAutosave: true)
+        let visible = try #require(first.screen, "needs a display").visibleFrame
+        let movedOrigin = NSPoint(x: visible.minX + 37, y: visible.minY + 41)
+        first.setFrameOrigin(movedOrigin)
+        first.saveFrame(usingName: name)
+        let savedFrame = first.frame
+        first.setFrameAutosaveName("")
+        first.close()
+
+        let reopened = makeWindow(centerBeforeAutosave: true)
+        #expect(reopened.frame == savedFrame)
+        reopened.setFrameAutosaveName("")
+        reopened.close()
+
+        let centeredLast = makeWindow(centerBeforeAutosave: false)
+        #expect(centeredLast.frame.origin != movedOrigin)
+        centeredLast.setFrameAutosaveName("")
+        centeredLast.close()
     }
 }
