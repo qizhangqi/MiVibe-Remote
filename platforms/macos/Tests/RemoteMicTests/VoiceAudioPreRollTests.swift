@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RemoteMic
 
@@ -35,5 +36,37 @@ struct VoiceAudioPreRollTests {
         #expect(!preRoll.isBuffering)
         #expect(preRoll.bufferedSamples.isEmpty)
         #expect(preRoll.accept([4]) == [4])
+    }
+
+    /// If the voice output never becomes healthy (for example no virtual mic
+    /// is selected), the pre-roll used to re-check every capture-settle
+    /// interval forever, so the voice shortcut stayed held after the key was
+    /// released. Once the key is up it must drop the buffered audio (reset,
+    /// tested above) and start the normal drain instead of retrying.
+    @Test func stopsWaitingForAudioOnceTheVoiceKeyIsReleased() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"),
+            encoding: .utf8
+        )
+        let start = try #require(source.range(of: "private func scheduleVoicePreRollRelease("))
+        let end = try #require(source.range(
+            of: "private func releaseVoicePreRoll(",
+            range: start.upperBound..<source.endIndex
+        ))
+        let body = source[start.upperBound..<end.lowerBound]
+
+        let released = try #require(body.range(of: "guard self.isStreaming else {"))
+        let retry = try #require(body.range(of: "self.ensureAudioReadyForVoice()"))
+        #expect(released.upperBound <= retry.lowerBound)
+        let releasedBranch = body[released.upperBound..<retry.lowerBound]
+        #expect(releasedBranch.contains("self.voicePreRoll.reset()"))
+        #expect(releasedBranch.contains(
+            "self.scheduleVoiceDrainAfterPacketSettle(generation: self.voiceStopGeneration)"
+        ))
+        #expect(releasedBranch.contains("return"))
     }
 }
