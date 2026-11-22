@@ -275,6 +275,10 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
                 self?.checkForUpdates()
             }
         )
+        // The window's size limits come from window.minSize below. Don't let
+        // SwiftUI derive them from the content as well: that re-measures every
+        // page, the hidden ones included, after each change in the window.
+        hostingController.sizingOptions = []
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 650),
             styleMask: [.titled, .closable, .resizable],
