@@ -762,94 +762,33 @@ struct SettingsView: View {
         customVoiceEditing = false
     }
 
-    @ViewBuilder
     private func mappingRow(_ button: RemoteButton) -> some View {
-        let selected = selectedRemoteButton == button
-        let currentAction = settings.action(for: button)
-        let currentShortcut = settings.shortcut(for: button)
-        let content = VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                Button {
-                    selectedRemoteButton = button
-                } label: {
-                    Text(button.displayName)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .help("\(button.displayName) · HID \(String(format: "0x%02X", button.hidUsage))")
-
-                Picker("", selection: Binding(
-                    get: { currentAction },
-                    set: { action in
-                        settings.setAction(action, for: button)
-                        selectedRemoteButton = button
-                        if action == .customShortcut {
-                            shortcutEditingTarget = ShortcutEditingTarget(
-                                button: button,
-                                trigger: .singleClick
-                            )
-                        }
-                    }
-                )) {
-                    ForEach(ButtonAction.pickerActions(
-                        installedBundleIdentifiers: installedApplicationBundleIdentifiers,
-                        current: currentAction
-                    )) { action in
-                        let unavailable = action.presetApplication.map {
-                            !installedApplicationBundleIdentifiers.contains($0.bundleIdentifier)
-                        } ?? false
-                        Text(action.displayName + (unavailable ? "（未安装）" : "")).tag(action)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 112)
-            }
-
-            if currentAction == .customShortcut {
-                Button {
-                    selectedRemoteButton = button
+        MappingRow(
+            button: button,
+            selected: selectedRemoteButton == button,
+            currentAction: settings.action(for: button),
+            currentShortcut: settings.shortcut(for: button),
+            installedBundleIdentifiers: installedApplicationBundleIdentifiers,
+            onSelect: { selectedRemoteButton = button },
+            onPick: { action in
+                settings.setAction(action, for: button)
+                selectedRemoteButton = button
+                if action == .customShortcut {
                     shortcutEditingTarget = ShortcutEditingTarget(
                         button: button,
                         trigger: .singleClick
                     )
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "keyboard")
-                        Text(currentShortcut?.displayName ?? "点击录入快捷键")
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Image(systemName: "pencil")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(currentShortcut == nil ? Color.orange : Color.primary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
                 }
-                .buttonStyle(.plain)
-                .help("录入要发送给当前应用的键盘快捷键")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-
-        if selected {
-            content
-                .adaptiveTintedGlassRounded(
-                    cornerRadius: 12,
-                    tint: Color.accentColor.opacity(0.10),
-                    interactive: true
+            },
+            onEditShortcut: {
+                selectedRemoteButton = button
+                shortcutEditingTarget = ShortcutEditingTarget(
+                    button: button,
+                    trigger: .singleClick
                 )
-        } else {
-            VStack(spacing: 0) {
-                content
-                Divider()
-                    .padding(.leading, 8)
             }
-        }
+        )
+        .equatable()
     }
 
     private func secondaryActionsPanel(for button: RemoteButton) -> some View {
@@ -1354,6 +1293,100 @@ struct SettingsView: View {
         inputMonitoringGranted = HIDRemoteMonitor.isInputMonitoringGranted
         accessibilityGranted = KeyboardInjector.isAccessibilityTrusted
         installedApplicationBundleIdentifiers = PresetApplication.installedBundleIdentifiers
+    }
+}
+
+/// One row of the mapping list. Equatable on its data so SwiftUI can skip the
+/// rows that did not change; every other row's Picker (about 30 menu items
+/// each) is otherwise rebuilt whenever anything in the settings window changes.
+private struct MappingRow: View, Equatable {
+    let button: RemoteButton
+    let selected: Bool
+    let currentAction: ButtonAction
+    let currentShortcut: CustomKeyboardShortcut?
+    let installedBundleIdentifiers: Set<String>
+    let onSelect: () -> Void
+    let onPick: (ButtonAction) -> Void
+    let onEditShortcut: () -> Void
+
+    // The closures are left out: they only write through to state that outlives
+    // this value, so two rows with equal data draw the same.
+    static func == (lhs: MappingRow, rhs: MappingRow) -> Bool {
+        lhs.button == rhs.button
+            && lhs.selected == rhs.selected
+            && lhs.currentAction == rhs.currentAction
+            && lhs.currentShortcut == rhs.currentShortcut
+            && lhs.installedBundleIdentifiers == rhs.installedBundleIdentifiers
+    }
+
+    @ViewBuilder
+    var body: some View {
+        let content = VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Button(action: onSelect) {
+                    Text(button.displayName)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("\(button.displayName) · HID \(String(format: "0x%02X", button.hidUsage))")
+
+                Picker("", selection: Binding(
+                    get: { currentAction },
+                    set: onPick
+                )) {
+                    ForEach(ButtonAction.pickerActions(
+                        installedBundleIdentifiers: installedBundleIdentifiers,
+                        current: currentAction
+                    )) { action in
+                        let unavailable = action.presetApplication.map {
+                            !installedBundleIdentifiers.contains($0.bundleIdentifier)
+                        } ?? false
+                        Text(action.displayName + (unavailable ? "（未安装）" : "")).tag(action)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 112)
+            }
+
+            if currentAction == .customShortcut {
+                Button(action: onEditShortcut) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard")
+                        Text(currentShortcut?.displayName ?? "点击录入快捷键")
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Image(systemName: "pencil")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(currentShortcut == nil ? Color.orange : Color.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .help("录入要发送给当前应用的键盘快捷键")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+
+        if selected {
+            content
+                .adaptiveTintedGlassRounded(
+                    cornerRadius: 12,
+                    tint: Color.accentColor.opacity(0.10),
+                    interactive: true
+                )
+        } else {
+            VStack(spacing: 0) {
+                content
+                Divider()
+                    .padding(.leading, 8)
+            }
+        }
     }
 }
 
