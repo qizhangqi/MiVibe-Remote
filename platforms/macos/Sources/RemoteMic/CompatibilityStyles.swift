@@ -81,6 +81,26 @@ extension View {
         }
     }
 
+    /// The same tinted glass, switched on and off without changing the view's
+    /// structure: toggling it neither rebuilds the content (and the controls in
+    /// it) nor changes its size, so the surrounding layout stays as it is.
+    @ViewBuilder
+    func adaptiveTintedGlassRounded(
+        cornerRadius: CGFloat,
+        tint: Color,
+        interactive: Bool = false,
+        isActive: Bool
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(macOS 26.0, *) {
+            let glass: Glass = interactive ? .clear.tint(tint).interactive() : .clear.tint(tint)
+            glassEffect(isActive ? glass : .identity, in: shape)
+        } else {
+            background(isActive ? tint : .clear, in: shape)
+                .overlay(shape.stroke(isActive ? tint.opacity(0.55) : .clear, lineWidth: 1))
+        }
+    }
+
     @ViewBuilder
     func adaptiveTintedGlassCircle(_ tint: Color) -> some View {
         if #available(macOS 26.0, *) {

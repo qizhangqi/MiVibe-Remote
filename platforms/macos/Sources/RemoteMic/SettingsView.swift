@@ -1499,19 +1499,20 @@ private struct MappingRow: View, Equatable {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
 
-        if selected {
+        // One structure for both states: moving the selection only switches the
+        // glass and the divider, so the row's controls are not rebuilt and the
+        // mapping list is not laid out again.
+        VStack(spacing: 0) {
             content
                 .adaptiveTintedGlassRounded(
                     cornerRadius: 12,
                     tint: Color.accentColor.opacity(0.10),
-                    interactive: true
+                    interactive: true,
+                    isActive: selected
                 )
-        } else {
-            VStack(spacing: 0) {
-                content
-                Divider()
-                    .padding(.leading, 8)
-            }
+            Divider()
+                .padding(.leading, 8)
+                .opacity(selected ? 0 : 1)
         }
     }
 }

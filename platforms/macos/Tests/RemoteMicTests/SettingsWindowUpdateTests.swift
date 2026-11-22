@@ -160,6 +160,29 @@ struct SettingsWindowUpdateTests {
         }
     }
 
+    @Test func movingTheSelectionKeepsEveryRowsPopup() throws {
+        try withRestoredStandardDefaults {
+            let model = BridgeAppModel()
+            model.settings.customMappingEnabled = true
+            model.settings.applyWeChatPreset()
+            let window = OffscreenSettingsWindow(model: model)
+            defer { window.close() }
+            let before = window.rowPopups()
+            #expect(before.count == 12)
+
+            // .ok is selected; picking in the .up row selects .up instead.
+            let upRow = try #require(before.dropFirst().first)
+            upRow.menu?.performActionForItem(at: upRow.indexOfSelectedItem == 1 ? 2 : 1)
+            window.settle()
+
+            // Same NSPopUpButton objects: no row was rebuilt for the selection.
+            let after = window.rowPopups()
+            #expect(after.count == 12)
+            #expect(zip(before, after).allSatisfy { $0 === $1 })
+            #expect(window.staleRows() == [])
+        }
+    }
+
     @Test func secondaryAndVoicePickersFollowSelectionAndSettings() throws {
         try withRestoredStandardDefaults {
             let model = BridgeAppModel()
