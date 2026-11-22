@@ -74,24 +74,14 @@ private enum InlineLocalPresetEditorContext: Equatable {
 
 struct SettingsView: View {
     let model: BridgeAppModel
-    @Bindable var settings: AppSettings
+    let settings: AppSettings
     let updatesConfigured: Bool
     let onCheckForUpdates: () -> Void
 
     @State private var selectedSection: SettingsSection
-    @State private var selectedRemoteButton: RemoteButton = .ok
-    @State private var shortcutEditingTarget: ShortcutEditingTarget?
-    @State private var voiceShortcutEditorPresented = false
-    @State private var inlinePresetEditorContext: InlineLocalPresetEditorContext?
-    @State private var inlinePresetName = ""
-    @State private var customVoiceEditing = false
-    @State private var customVoiceDraftShortcut: CustomKeyboardShortcut?
-    @State private var customVoiceDraftTriggerMode: VoiceShortcutTriggerMode = .hold
-    @State private var pendingPresetDeletion: LocalPreset?
     @State private var bluetoothAuthorization = CBManager.authorization
     @State private var inputMonitoringGranted = HIDRemoteMonitor.isInputMonitoringGranted
     @State private var accessibilityGranted = KeyboardInjector.isAccessibilityTrusted
-    @State private var advancedAudioExpanded = false
     @State private var installedApplicationBundleIdentifiers = Set<String>()
 
     init(
@@ -122,49 +112,6 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .showRemoteMicAbout)) { _ in
             selectedSection = .about
-        }
-        .sheet(item: $shortcutEditingTarget) { target in
-            ShortcutEditorSheet(
-                title: "录入\(target.button.displayName)\(target.trigger.displayName)快捷键",
-                currentShortcut: settings.configuredAction(
-                    for: target.button,
-                    trigger: target.trigger
-                ).shortcut
-            ) { shortcut in
-                settings.setShortcut(
-                    shortcut,
-                    for: target.button,
-                    trigger: target.trigger
-                )
-            }
-        }
-        .sheet(isPresented: $voiceShortcutEditorPresented) {
-            ShortcutEditorSheet(
-                title: "录入语音键快捷键",
-                currentShortcut: settings.activeLocalPreset != nil && customVoiceEditing
-                    ? customVoiceDraftShortcut
-                    : settings.customVoiceShortcut
-            ) { shortcut in
-                if settings.activeLocalPreset != nil && customVoiceEditing {
-                    customVoiceDraftShortcut = shortcut
-                } else {
-                    settings.customVoiceShortcut = shortcut
-                    settings.selectVoiceShortcutProfile(.custom)
-                }
-            }
-        }
-        .alert(item: $pendingPresetDeletion) { preset in
-            Alert(
-                title: Text("删除“\(preset.name)”？"),
-                message: Text("这个本地预设及其按键映射将被删除，此操作无法撤销。"),
-                primaryButton: .destructive(Text("删除")) {
-                    settings.deleteLocalPreset(id: preset.id)
-                    settings.applyCodexPreset()
-                    customVoiceEditing = false
-                    selectedRemoteButton = .power
-                },
-                secondaryButton: .cancel()
-            )
         }
     }
 
@@ -230,19 +177,29 @@ struct SettingsView: View {
 
     private var selectedPage: some View {
         ZStack {
-            connectionPage
+            ConnectionPage(model: model, settings: settings)
                 .opacity(selectedSection == .connection ? 1 : 0)
                 .allowsHitTesting(selectedSection == .connection)
                 .accessibilityHidden(selectedSection != .connection)
-            mappingPage
+            MappingPage(
+                model: model,
+                settings: settings,
+                installedApplicationBundleIdentifiers: installedApplicationBundleIdentifiers
+            )
                 .opacity(selectedSection == .mapping ? 1 : 0)
                 .allowsHitTesting(selectedSection == .mapping)
                 .accessibilityHidden(selectedSection != .mapping)
-            permissionsPage
+            PermissionsPage(
+                model: model,
+                settings: settings,
+                bluetoothAuthorization: bluetoothAuthorization,
+                inputMonitoringGranted: inputMonitoringGranted,
+                accessibilityGranted: accessibilityGranted
+            )
                 .opacity(selectedSection == .permissions ? 1 : 0)
                 .allowsHitTesting(selectedSection == .permissions)
                 .accessibilityHidden(selectedSection != .permissions)
-            guidePage
+            GuidePage(model: model, selectedSection: $selectedSection)
                 .opacity(selectedSection == .guide ? 1 : 0)
                 .allowsHitTesting(selectedSection == .guide)
                 .accessibilityHidden(selectedSection != .guide)
@@ -256,7 +213,23 @@ struct SettingsView: View {
         }
     }
 
-    private var connectionPage: some View {
+    private func refreshRuntimeStates() {
+        bluetoothAuthorization = CBManager.authorization
+        inputMonitoringGranted = HIDRemoteMonitor.isInputMonitoringGranted
+        accessibilityGranted = KeyboardInjector.isAccessibilityTrusted
+        installedApplicationBundleIdentifiers = PresetApplication.installedBundleIdentifiers
+    }
+}
+
+/// The connection page. Like every page, it reads only what it shows, so
+/// changes elsewhere in the settings do not re-run it.
+private struct ConnectionPage: View {
+    let model: BridgeAppModel
+    let settings: AppSettings
+
+    @State private var advancedAudioExpanded = false
+
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(
@@ -333,7 +306,13 @@ struct SettingsView: View {
     }
 
     private var audioSettingsPanel: some View {
-        GlassPanel {
+        // Observation tracks what a body reads. Read the values that are shown
+        // through a Binding here, so a change made elsewhere still refreshes them.
+        let selectedAudioDeviceUID = settings.selectedAudioDeviceUID
+        let gainDB = settings.gainDB
+        let headsetCompatibilityEnabled = settings.headsetCompatibilityEnabled
+        let computerMicrophonePassthroughEnabled = settings.computerMicrophonePassthroughEnabled
+        return GlassPanel {
             VStack(alignment: .leading, spacing: 13) {
                 Text("准备情况")
                     .font(.headline)
@@ -367,7 +346,7 @@ struct SettingsView: View {
                             Text("音频路由")
                                 .frame(width: 72, alignment: .leading)
                             Picker("", selection: Binding(
-                                get: { settings.selectedAudioDeviceUID },
+                                get: { selectedAudioDeviceUID },
                                 set: { value in
                                     settings.selectedAudioDeviceUID = value
                                     model.applyAudioSettings()
@@ -386,7 +365,7 @@ struct SettingsView: View {
                             Text("麦克风音量")
                                 .frame(width: 72, alignment: .leading)
                             Slider(value: Binding(
-                                get: { settings.gainDB },
+                                get: { gainDB },
                                 set: { settings.gainDB = $0 }
                             ), in: 0...24, step: 1)
                             Text("\(Int(settings.gainDB)) dB")
@@ -399,7 +378,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         Toggle("保持虚拟麦克风为默认输入", isOn: Binding(
-                            get: { settings.headsetCompatibilityEnabled },
+                            get: { headsetCompatibilityEnabled },
                             set: { enabled in
                                 settings.headsetCompatibilityEnabled = enabled
                                 model.applyHeadsetCompatibilitySetting()
@@ -410,7 +389,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
 
                         Toggle("电脑麦克风透传（会显示橙色隐私标记）", isOn: Binding(
-                            get: { settings.computerMicrophonePassthroughEnabled },
+                            get: { computerMicrophonePassthroughEnabled },
                             set: { enabled in
                                 settings.computerMicrophonePassthroughEnabled = enabled
                                 model.applyComputerMicrophonePassthroughSetting()
@@ -450,7 +429,111 @@ struct SettingsView: View {
         }
     }
 
-    private var mappingPage: some View {
+    private var connectionBadge: String {
+        model.connectionStatus.contains("已连接") ? "已连接" : "连接中"
+    }
+
+    private var connectionTint: Color {
+        model.connectionStatus.contains("已连接") ? .green : .orange
+    }
+
+    private var voiceTriggerBadge: String {
+        model.voiceShortcutStatus.contains("需要辅助功能") ? "需要授权" : "已启用"
+    }
+
+    private var isVirtualMicrophoneSelected: Bool {
+        guard let device = DoubaoAudioDevicePolicy.device(in: model.audioDevices) else {
+            return false
+        }
+        return settings.selectedAudioDeviceUID == device.uid
+    }
+
+    private var virtualMicrophoneBadge: String {
+        if isVirtualMicrophoneSelected && model.isAudioReady { return "已就绪" }
+        if isVirtualMicrophoneSelected { return "自动恢复中" }
+        return model.hasDoubaoAudioDevice ? "正在配置" : "需要安装"
+    }
+
+    private var virtualMicrophoneDetail: String {
+        if isVirtualMicrophoneSelected && model.isAudioReady {
+            if settings.computerMicrophonePassthroughEnabled {
+                return "默认输入保持 MiRemoteV 2ch；电脑麦克风与遥控器在内部无缝切换"
+            }
+            return "默认输入保持 MiRemoteV 2ch；仅按住遥控器语音键时传输声音"
+        }
+        if isVirtualMicrophoneSelected {
+            return model.audioStatus
+        }
+        if model.hasDoubaoAudioDevice {
+            return "已找到 MiRemoteV 2ch，正在自动选择"
+        }
+        return "未找到 MiRemoteV 2ch，请重新安装应用和驱动"
+    }
+}
+
+private struct MappingPage: View {
+    let model: BridgeAppModel
+    @Bindable var settings: AppSettings
+    let installedApplicationBundleIdentifiers: Set<String>
+
+    @State private var selectedRemoteButton: RemoteButton = .ok
+    @State private var shortcutEditingTarget: ShortcutEditingTarget?
+    @State private var voiceShortcutEditorPresented = false
+    @State private var inlinePresetEditorContext: InlineLocalPresetEditorContext?
+    @State private var inlinePresetName = ""
+    @State private var customVoiceEditing = false
+    @State private var customVoiceDraftShortcut: CustomKeyboardShortcut?
+    @State private var customVoiceDraftTriggerMode: VoiceShortcutTriggerMode = .hold
+    @State private var pendingPresetDeletion: LocalPreset?
+
+    var body: some View {
+        page
+        .sheet(item: $shortcutEditingTarget) { target in
+            ShortcutEditorSheet(
+                title: "录入\(target.button.displayName)\(target.trigger.displayName)快捷键",
+                currentShortcut: settings.configuredAction(
+                    for: target.button,
+                    trigger: target.trigger
+                ).shortcut
+            ) { shortcut in
+                settings.setShortcut(
+                    shortcut,
+                    for: target.button,
+                    trigger: target.trigger
+                )
+            }
+        }
+        .sheet(isPresented: $voiceShortcutEditorPresented) {
+            ShortcutEditorSheet(
+                title: "录入语音键快捷键",
+                currentShortcut: settings.activeLocalPreset != nil && customVoiceEditing
+                    ? customVoiceDraftShortcut
+                    : settings.customVoiceShortcut
+            ) { shortcut in
+                if settings.activeLocalPreset != nil && customVoiceEditing {
+                    customVoiceDraftShortcut = shortcut
+                } else {
+                    settings.customVoiceShortcut = shortcut
+                    settings.selectVoiceShortcutProfile(.custom)
+                }
+            }
+        }
+        .alert(item: $pendingPresetDeletion) { preset in
+            Alert(
+                title: Text("删除“\(preset.name)”？"),
+                message: Text("这个本地预设及其按键映射将被删除，此操作无法撤销。"),
+                primaryButton: .destructive(Text("删除")) {
+                    settings.deleteLocalPreset(id: preset.id)
+                    settings.applyCodexPreset()
+                    customVoiceEditing = false
+                    selectedRemoteButton = .power
+                },
+                secondaryButton: .cancel()
+            )
+        }
+    }
+
+    private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
             PageHeader(
@@ -535,7 +618,10 @@ struct SettingsView: View {
     }
 
     private var mappingStatusBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Observation tracks what a body reads. Read the values that are shown
+        // through a Binding here, so a change made elsewhere still refreshes them.
+        let customMappingEnabled = settings.customMappingEnabled
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("当前模式")
                     .font(.caption)
@@ -546,7 +632,7 @@ struct SettingsView: View {
                 )
             }
             Toggle("启用小米遥控器自定义按键映射", isOn: Binding(
-                get: { settings.customMappingEnabled },
+                get: { customMappingEnabled },
                 set: { enabled in
                     settings.customMappingEnabled = enabled
                     model.applyHIDSettings()
@@ -656,7 +742,10 @@ struct SettingsView: View {
     }
 
     private var voiceShortcutControls: some View {
-        HStack(spacing: 10) {
+        // Observation tracks what a body reads. Read the values that are shown
+        // through a Binding here, so a change made elsewhere still refreshes them.
+        let voiceShortcutProfile = settings.voiceShortcutProfile
+        return HStack(spacing: 10) {
             if settings.activeLocalPreset != nil {
                 if customVoiceEditing {
                     Button {
@@ -703,7 +792,7 @@ struct SettingsView: View {
                 }
             } else {
                 Picker("语音快捷键", selection: Binding(
-                    get: { settings.voiceShortcutProfile },
+                    get: { voiceShortcutProfile },
                     set: { profile in
                         settings.selectVoiceShortcutProfile(profile)
                         customVoiceEditing = profile == .custom
@@ -872,278 +961,6 @@ struct SettingsView: View {
         }
     }
 
-    private var guidePage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(
-                    title: "使用教程",
-                    subtitle: "从首次连接到自定义语音键，按这条最短路径完成设置"
-                )
-
-                GlassPanel {
-                    VStack(alignment: .leading, spacing: 16) {
-                        GuideStepRow(
-                            number: 1,
-                            title: "先完成三个权限",
-                            detail: "开启蓝牙、输入监控和辅助功能。授权后返回 MiVibe，应用会自动重新检测按键。",
-                            symbol: "checkmark.shield.fill"
-                        )
-                        GuideStepRow(
-                            number: 2,
-                            title: "确认遥控器和虚拟麦克风就绪",
-                            detail: "连接页应显示遥控器已连接、MiRemoteV 2ch 已就绪。可先播放测试音检查音频通道。",
-                            symbol: "waveform.badge.mic"
-                        )
-                        GuideStepRow(
-                            number: 3,
-                            title: "选择预设或自定义",
-                            detail: "Codex、WorkBuddy、微信可以一键套用；本地预设可自行命名、继续新增和编辑，并保存普通按键、双击/长按及语音快捷键。",
-                            symbol: "slider.horizontal.3"
-                        )
-                        GuideStepRow(
-                            number: 4,
-                            title: "按住语音键说话",
-                            detail: "原生语音键负责让遥控器真正传输声音；松开后应用会等待尾部音频送完，再结束目标软件听写。",
-                            symbol: "mic.fill"
-                        )
-                    }
-                }
-
-                AdaptiveGlassEffectContainer(spacing: 14) {
-                    HStack(alignment: .top, spacing: 14) {
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("推荐测试顺序", systemImage: "list.number")
-                                    .font(.headline)
-                                Text("1. 用方向键移动光标\n2. 用返回键删除\n3. 按住语音键说一句完整的话\n4. 松开后确认尾音完整\n5. 用确认键发送")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineSpacing(4)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-
-                        GlassPanel {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("遇到问题", systemImage: "wrench.and.screwdriver.fill")
-                                    .font(.headline)
-                                Text("方向键可用但映射无效：重新检查输入监控与辅助功能。\n有快捷键但没声音：确认按的是原生语音键。\n语音无文字：检查目标软件快捷键与当前预设是否一致。")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .lineSpacing(4)
-                                HStack {
-                                    Button("查看权限") { selectedSection = .permissions }
-                                        .adaptiveGlassButtonStyle()
-                                    Button("打开日志") { model.openLogFolder() }
-                                        .adaptiveGlassButtonStyle()
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-            }
-            .padding(22)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .adaptiveSoftTopScrollEdge()
-    }
-
-    private var permissionsPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(
-                    title: "权限与隐私",
-                    subtitle: "按顺序完成权限设置，确保小米遥控器正常连接和发送按键"
-                )
-
-                AdaptiveGlassEffectContainer(spacing: 14) {
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("所需权限")
-                                .font(.headline)
-                                .padding(.bottom, 8)
-
-                            permissionRow(
-                                index: 1,
-                                symbol: "antenna.radiowaves.left.and.right",
-                                title: "蓝牙",
-                                detail: "连接小米遥控器并读取 ATVV 语音服务",
-                                state: bluetoothPermissionState,
-                                actionTitle: "打开蓝牙设置"
-                            ) {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-
-                            Divider().padding(.leading, 62)
-
-                            permissionRow(
-                                index: 2,
-                                symbol: "keyboard",
-                                title: "输入监控",
-                                detail: "只在小米遥控器设备层屏蔽原始事件，再发送一次自定义动作",
-                                state: inputMonitoringGranted ? .granted : .pending,
-                                actionTitle: "请求权限"
-                            ) {
-                                model.requestInputMonitoringPermission()
-                            }
-
-                            Divider().padding(.leading, 62)
-
-                            permissionRow(
-                                index: 3,
-                                symbol: "mic",
-                                title: "麦克风",
-                                detail: settings.computerMicrophonePassthroughEnabled
-                                    ? "可选：把 MacBook 内置麦克风转发到常驻的 MiRemoteV 2ch"
-                                    : "可选功能，默认关闭；仅开启电脑麦克风透传时才需要授权",
-                                state: computerMicrophonePermissionState,
-                                actionTitle: settings.computerMicrophonePassthroughEnabled
-                                    ? "请求权限"
-                                    : "开启透传"
-                            ) {
-                                model.requestMicrophonePermission()
-                            }
-
-                            Divider().padding(.leading, 62)
-
-                            permissionRow(
-                                index: 4,
-                                symbol: "accessibility",
-                                title: "辅助功能",
-                                detail: "把映射后的按键动作发送给当前应用",
-                                state: accessibilityGranted ? .granted : .pending,
-                                actionTitle: "请求权限"
-                            ) {
-                                model.requestAccessibilityPermission()
-                            }
-                        }
-                    }
-
-                    GlassPanel {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("诊断")
-                                .font(.headline)
-                            HStack(spacing: 12) {
-                                Image(systemName: "doc.text.magnifyingglass")
-                                    .font(.title3)
-                                    .foregroundStyle(Color.accentColor)
-                                    .frame(width: 34, height: 34)
-                                    .adaptiveTintedGlassCircle(Color.accentColor.opacity(0.14))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("应用日志")
-                                    Text("日志不记录语音内容、蓝牙地址或外设 UUID。")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("在 Finder 中显示日志") { model.openLogFolder() }
-                                    .adaptiveGlassButtonStyle()
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(22)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .adaptiveSoftTopScrollEdge()
-    }
-
-    private func permissionRow(
-        index: Int,
-        symbol: String,
-        title: String,
-        detail: String,
-        state: PermissionVisualState,
-        actionTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 14) {
-            Text("\(index)")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(Color.accentColor, in: Circle())
-
-            Image(systemName: symbol)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 42, height: 42)
-                .adaptiveTintedGlassCircle(Color.accentColor.opacity(0.14))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 16)
-            StatusPill(text: state.title, tint: state.tint)
-            Button(actionTitle, action: action)
-                .adaptiveGlassButtonStyle()
-                .frame(width: 112)
-        }
-        .padding(.vertical, 12)
-    }
-
-    private var connectionBadge: String {
-        model.connectionStatus.contains("已连接") ? "已连接" : "连接中"
-    }
-
-    private var connectionTint: Color {
-        model.connectionStatus.contains("已连接") ? .green : .orange
-    }
-
-    private var voiceTriggerBadge: String {
-        model.voiceShortcutStatus.contains("需要辅助功能") ? "需要授权" : "已启用"
-    }
-
-    private var isVirtualMicrophoneSelected: Bool {
-        guard let device = DoubaoAudioDevicePolicy.device(in: model.audioDevices) else {
-            return false
-        }
-        return settings.selectedAudioDeviceUID == device.uid
-    }
-
-    private var virtualMicrophoneBadge: String {
-        if isVirtualMicrophoneSelected && model.isAudioReady { return "已就绪" }
-        if isVirtualMicrophoneSelected { return "自动恢复中" }
-        return model.hasDoubaoAudioDevice ? "正在配置" : "需要安装"
-    }
-
-    private var virtualMicrophoneDetail: String {
-        if isVirtualMicrophoneSelected && model.isAudioReady {
-            if settings.computerMicrophonePassthroughEnabled {
-                return "默认输入保持 MiRemoteV 2ch；电脑麦克风与遥控器在内部无缝切换"
-            }
-            return "默认输入保持 MiRemoteV 2ch；仅按住遥控器语音键时传输声音"
-        }
-        if isVirtualMicrophoneSelected {
-            return model.audioStatus
-        }
-        if model.hasDoubaoAudioDevice {
-            return "已找到 MiRemoteV 2ch，正在自动选择"
-        }
-        return "未找到 MiRemoteV 2ch，请重新安装应用和驱动"
-    }
-
-    private var bluetoothPermissionState: PermissionVisualState {
-        bluetoothAuthorization == .allowedAlways ? .granted : .pending
-    }
-
-    private var computerMicrophonePermissionState: PermissionVisualState {
-        guard settings.computerMicrophonePassthroughEnabled else { return .optional }
-        return model.computerMicrophoneStatus.contains("→ MiRemoteV 2ch")
-            ? .granted
-            : .pending
-    }
-
     private var currentPresetStatus: String {
         if let preset = settings.activeLocalPreset {
             return "\(preset.name) 模式"
@@ -1286,12 +1103,249 @@ struct SettingsView: View {
         inlinePresetName = preset.name
         inlinePresetEditorContext = .rename(preset.id)
     }
+}
 
-    private func refreshRuntimeStates() {
-        bluetoothAuthorization = CBManager.authorization
-        inputMonitoringGranted = HIDRemoteMonitor.isInputMonitoringGranted
-        accessibilityGranted = KeyboardInjector.isAccessibilityTrusted
-        installedApplicationBundleIdentifiers = PresetApplication.installedBundleIdentifiers
+private struct PermissionsPage: View {
+    let model: BridgeAppModel
+    let settings: AppSettings
+    let bluetoothAuthorization: CBManagerAuthorization
+    let inputMonitoringGranted: Bool
+    let accessibilityGranted: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "权限与隐私",
+                    subtitle: "按顺序完成权限设置，确保小米遥控器正常连接和发送按键"
+                )
+
+                AdaptiveGlassEffectContainer(spacing: 14) {
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("所需权限")
+                                .font(.headline)
+                                .padding(.bottom, 8)
+
+                            permissionRow(
+                                index: 1,
+                                symbol: "antenna.radiowaves.left.and.right",
+                                title: "蓝牙",
+                                detail: "连接小米遥控器并读取 ATVV 语音服务",
+                                state: bluetoothPermissionState,
+                                actionTitle: "打开蓝牙设置"
+                            ) {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+
+                            Divider().padding(.leading, 62)
+
+                            permissionRow(
+                                index: 2,
+                                symbol: "keyboard",
+                                title: "输入监控",
+                                detail: "只在小米遥控器设备层屏蔽原始事件，再发送一次自定义动作",
+                                state: inputMonitoringGranted ? .granted : .pending,
+                                actionTitle: "请求权限"
+                            ) {
+                                model.requestInputMonitoringPermission()
+                            }
+
+                            Divider().padding(.leading, 62)
+
+                            permissionRow(
+                                index: 3,
+                                symbol: "mic",
+                                title: "麦克风",
+                                detail: settings.computerMicrophonePassthroughEnabled
+                                    ? "可选：把 MacBook 内置麦克风转发到常驻的 MiRemoteV 2ch"
+                                    : "可选功能，默认关闭；仅开启电脑麦克风透传时才需要授权",
+                                state: computerMicrophonePermissionState,
+                                actionTitle: settings.computerMicrophonePassthroughEnabled
+                                    ? "请求权限"
+                                    : "开启透传"
+                            ) {
+                                model.requestMicrophonePermission()
+                            }
+
+                            Divider().padding(.leading, 62)
+
+                            permissionRow(
+                                index: 4,
+                                symbol: "accessibility",
+                                title: "辅助功能",
+                                detail: "把映射后的按键动作发送给当前应用",
+                                state: accessibilityGranted ? .granted : .pending,
+                                actionTitle: "请求权限"
+                            ) {
+                                model.requestAccessibilityPermission()
+                            }
+                        }
+                    }
+
+                    GlassPanel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("诊断")
+                                .font(.headline)
+                            HStack(spacing: 12) {
+                                Image(systemName: "doc.text.magnifyingglass")
+                                    .font(.title3)
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 34, height: 34)
+                                    .adaptiveTintedGlassCircle(Color.accentColor.opacity(0.14))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("应用日志")
+                                    Text("日志不记录语音内容、蓝牙地址或外设 UUID。")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("在 Finder 中显示日志") { model.openLogFolder() }
+                                    .adaptiveGlassButtonStyle()
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .adaptiveSoftTopScrollEdge()
+    }
+
+    private func permissionRow(
+        index: Int,
+        symbol: String,
+        title: String,
+        detail: String,
+        state: PermissionVisualState,
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 14) {
+            Text("\(index)")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor, in: Circle())
+
+            Image(systemName: symbol)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 42, height: 42)
+                .adaptiveTintedGlassCircle(Color.accentColor.opacity(0.14))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+            StatusPill(text: state.title, tint: state.tint)
+            Button(actionTitle, action: action)
+                .adaptiveGlassButtonStyle()
+                .frame(width: 112)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var bluetoothPermissionState: PermissionVisualState {
+        bluetoothAuthorization == .allowedAlways ? .granted : .pending
+    }
+
+    private var computerMicrophonePermissionState: PermissionVisualState {
+        guard settings.computerMicrophonePassthroughEnabled else { return .optional }
+        return model.computerMicrophoneStatus.contains("→ MiRemoteV 2ch")
+            ? .granted
+            : .pending
+    }
+}
+
+private struct GuidePage: View {
+    let model: BridgeAppModel
+    @Binding var selectedSection: SettingsSection
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeader(
+                    title: "使用教程",
+                    subtitle: "从首次连接到自定义语音键，按这条最短路径完成设置"
+                )
+
+                GlassPanel {
+                    VStack(alignment: .leading, spacing: 16) {
+                        GuideStepRow(
+                            number: 1,
+                            title: "先完成三个权限",
+                            detail: "开启蓝牙、输入监控和辅助功能。授权后返回 MiVibe，应用会自动重新检测按键。",
+                            symbol: "checkmark.shield.fill"
+                        )
+                        GuideStepRow(
+                            number: 2,
+                            title: "确认遥控器和虚拟麦克风就绪",
+                            detail: "连接页应显示遥控器已连接、MiRemoteV 2ch 已就绪。可先播放测试音检查音频通道。",
+                            symbol: "waveform.badge.mic"
+                        )
+                        GuideStepRow(
+                            number: 3,
+                            title: "选择预设或自定义",
+                            detail: "Codex、WorkBuddy、微信可以一键套用；本地预设可自行命名、继续新增和编辑，并保存普通按键、双击/长按及语音快捷键。",
+                            symbol: "slider.horizontal.3"
+                        )
+                        GuideStepRow(
+                            number: 4,
+                            title: "按住语音键说话",
+                            detail: "原生语音键负责让遥控器真正传输声音；松开后应用会等待尾部音频送完，再结束目标软件听写。",
+                            symbol: "mic.fill"
+                        )
+                    }
+                }
+
+                AdaptiveGlassEffectContainer(spacing: 14) {
+                    HStack(alignment: .top, spacing: 14) {
+                        GlassPanel {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("推荐测试顺序", systemImage: "list.number")
+                                    .font(.headline)
+                                Text("1. 用方向键移动光标\n2. 用返回键删除\n3. 按住语音键说一句完整的话\n4. 松开后确认尾音完整\n5. 用确认键发送")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineSpacing(4)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        GlassPanel {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("遇到问题", systemImage: "wrench.and.screwdriver.fill")
+                                    .font(.headline)
+                                Text("方向键可用但映射无效：重新检查输入监控与辅助功能。\n有快捷键但没声音：确认按的是原生语音键。\n语音无文字：检查目标软件快捷键与当前预设是否一致。")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .lineSpacing(4)
+                                HStack {
+                                    Button("查看权限") { selectedSection = .permissions }
+                                        .adaptiveGlassButtonStyle()
+                                    Button("打开日志") { model.openLogFolder() }
+                                        .adaptiveGlassButtonStyle()
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .adaptiveSoftTopScrollEdge()
     }
 }
 
