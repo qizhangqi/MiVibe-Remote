@@ -541,38 +541,44 @@ private struct MappingPage: View {
                 subtitle: "普通按键和语音触发都可配置；遥控器麦克风的收音开关仍由语音键可靠控制"
             )
 
-            GlassPanel {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: 12) {
-                        mappingStatusBlock
-                        Spacer(minLength: 12)
-                        mappingPresetControls
-                    }
-                    VStack(alignment: .leading, spacing: 12) {
-                        mappingStatusBlock
-                        mappingPresetControls
-                    }
-                }
+            // Each part below reads its own settings, so a change re-runs only the
+            // parts that show it. A key lists the page state the part reads.
+            ObservationScope(key: PresetBarKey(
+                editor: inlinePresetEditorContext,
+                name: inlinePresetName
+            )) {
+                presetBar
             }
+            .equatable()
 
-            voiceShortcutPanel
+            ObservationScope(key: VoicePanelKey(
+                editing: customVoiceEditing,
+                draftShortcut: customVoiceDraftShortcut,
+                draftTriggerMode: customVoiceDraftTriggerMode
+            )) {
+                voiceShortcutPanel
+            }
+            .equatable()
 
             AdaptiveGlassEffectContainer(spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
-                    GlassPanel {
-                        RemoteControlDiagram(
-                            selectedButton: $selectedRemoteButton,
-                            activeButtons: model.activeRemoteButtons,
-                            voiceActive: model.isStreaming,
-                            voiceProfile: settings.voiceShortcutProfile,
-                            voiceShortcutDisplayName: settings.voiceShortcutDisplayName
-                        )
-                        .onChange(of: model.activeRemoteButtons) { _, buttons in
-                            if let button = RemoteButton.allCases.first(where: { buttons.contains($0) }) {
-                                selectedRemoteButton = button
+                    ObservationScope(key: selectedRemoteButton) {
+                        GlassPanel {
+                            RemoteControlDiagram(
+                                selectedButton: $selectedRemoteButton,
+                                activeButtons: model.activeRemoteButtons,
+                                voiceActive: model.isStreaming,
+                                voiceProfile: settings.voiceShortcutProfile,
+                                voiceShortcutDisplayName: settings.voiceShortcutDisplayName
+                            )
+                            .onChange(of: model.activeRemoteButtons) { _, buttons in
+                                if let button = RemoteButton.allCases.first(where: { buttons.contains($0) }) {
+                                    selectedRemoteButton = button
+                                }
                             }
                         }
                     }
+                    .equatable()
                     .frame(width: 206)
 
                     GlassPanel {
@@ -595,7 +601,14 @@ private struct MappingPage: View {
                                             ? buttons.prefix(midpoint)
                                             : buttons.suffix(from: midpoint)
                                         ForEach(range) { button in
-                                            mappingRow(button)
+                                            ObservationScope(key: MappingRowKey(
+                                                button: button,
+                                                selected: selectedRemoteButton == button,
+                                                installed: installedApplicationBundleIdentifiers
+                                            )) {
+                                                mappingRow(button)
+                                            }
+                                            .equatable()
                                         }
                                     }
                                     .frame(maxWidth: .infinity)
@@ -603,7 +616,13 @@ private struct MappingPage: View {
                             }
 
                             Divider()
-                            secondaryActionsPanel(for: selectedRemoteButton)
+                            ObservationScope(key: SecondaryPanelKey(
+                                button: selectedRemoteButton,
+                                installed: installedApplicationBundleIdentifiers
+                            )) {
+                                secondaryActionsPanel(for: selectedRemoteButton)
+                            }
+                            .equatable()
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -615,6 +634,22 @@ private struct MappingPage: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .adaptiveSoftTopScrollEdge()
+    }
+
+    private var presetBar: some View {
+    GlassPanel {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                mappingStatusBlock
+                Spacer(minLength: 12)
+                mappingPresetControls
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                mappingStatusBlock
+                mappingPresetControls
+            }
+        }
+    }
     }
 
     private var mappingStatusBlock: some View {
@@ -1347,6 +1382,44 @@ private struct GuidePage: View {
         }
         .adaptiveSoftTopScrollEdge()
     }
+}
+
+/// Builds `content` in a view body of its own, so the observable settings it
+/// reads are tracked for this part only and a change re-runs this part, not
+/// the whole page. `key` must hold every value from the enclosing view that
+/// `content` reads and that is not observable (its @State, its plain
+/// properties): while the key is unchanged, SwiftUI skips this part.
+private struct ObservationScope<Key: Equatable, Content: View>: View, Equatable {
+    let key: Key
+    @ViewBuilder let content: () -> Content
+
+    static func == (lhs: ObservationScope, rhs: ObservationScope) -> Bool {
+        lhs.key == rhs.key
+    }
+
+    var body: some View { content() }
+}
+
+private struct PresetBarKey: Equatable {
+    let editor: InlineLocalPresetEditorContext?
+    let name: String
+}
+
+private struct VoicePanelKey: Equatable {
+    let editing: Bool
+    let draftShortcut: CustomKeyboardShortcut?
+    let draftTriggerMode: VoiceShortcutTriggerMode
+}
+
+private struct MappingRowKey: Equatable {
+    let button: RemoteButton
+    let selected: Bool
+    let installed: Set<String>
+}
+
+private struct SecondaryPanelKey: Equatable {
+    let button: RemoteButton
+    let installed: Set<String>
 }
 
 /// One row of the mapping list. Equatable on its data so SwiftUI can skip the

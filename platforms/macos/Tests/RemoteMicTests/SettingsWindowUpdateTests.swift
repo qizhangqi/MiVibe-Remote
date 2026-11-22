@@ -160,6 +160,50 @@ struct SettingsWindowUpdateTests {
         }
     }
 
+    @Test func secondaryAndVoicePickersFollowSelectionAndSettings() throws {
+        try withRestoredStandardDefaults {
+            let model = BridgeAppModel()
+            let settings = model.settings
+            settings.customMappingEnabled = true
+            settings.applyWeChatPreset()
+            settings.setAction(.arrowUp, for: .up, trigger: .doubleClick)
+            let window = OffscreenSettingsWindow(model: model)
+            defer { window.close() }
+            @MainActor func popups(width: CGFloat) -> [NSPopUpButton] {
+                allSubviews(window.hosting).compactMap { $0 as? NSPopUpButton }
+                    .filter { abs($0.frame.width - width) < 1 }
+                    .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+            }
+            @MainActor func doubleClickTitle() -> String? { popups(width: 150).first?.titleOfSelectedItem }
+
+            // .ok is selected at first and has no double-click action.
+            #expect(doubleClickTitle() == ButtonAction.disabled.displayName)
+
+            // Picking in the .up row selects .up; the panel follows the selection.
+            let upRow = try #require(window.rowPopups().dropFirst().first)
+            upRow.menu?.performActionForItem(at: upRow.indexOfSelectedItem == 1 ? 2 : 1)
+            window.settle()
+            #expect(doubleClickTitle() == ButtonAction.arrowUp.displayName)
+
+            // A change made in code shows up too.
+            settings.setAction(.arrowDown, for: .up, trigger: .doubleClick)
+            window.settle()
+            #expect(doubleClickTitle() == ButtonAction.arrowDown.displayName)
+
+            // The voice shortcut picker follows the selected profile.
+            let profileNames = Set(VoiceShortcutProfile.allCases.map(\.displayName))
+            @MainActor func voicePicker() -> NSPopUpButton? {
+                allSubviews(window.hosting).compactMap { $0 as? NSPopUpButton }
+                    .first { Set($0.itemTitles) == profileNames }
+            }
+            for profile in [VoiceShortcutProfile.workBuddy, .codex, .weChat] {
+                settings.selectVoiceShortcutProfile(profile)
+                window.settle()
+                #expect(voicePicker()?.titleOfSelectedItem == profile.displayName)
+            }
+        }
+    }
+
     @Test func aMappingChangeOnlyNotifiesViewsThatReadMappings() {
         withRestoredStandardDefaults {
             let model = BridgeAppModel()
