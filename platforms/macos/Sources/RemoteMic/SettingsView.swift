@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import CoreBluetooth
 import SwiftUI
 
@@ -74,8 +73,8 @@ private enum InlineLocalPresetEditorContext: Equatable {
 }
 
 struct SettingsView: View {
-    @ObservedObject var model: BridgeAppModel
-    @ObservedObject var settings: AppSettings
+    let model: BridgeAppModel
+    @Bindable var settings: AppSettings
     let updatesConfigured: Bool
     let onCheckForUpdates: () -> Void
 
@@ -485,7 +484,7 @@ struct SettingsView: View {
                             voiceProfile: settings.voiceShortcutProfile,
                             voiceShortcutDisplayName: settings.voiceShortcutDisplayName
                         )
-                        .onReceive(model.$activeRemoteButtons) { buttons in
+                        .onChange(of: model.activeRemoteButtons) { _, buttons in
                             if let button = RemoteButton.allCases.first(where: { buttons.contains($0) }) {
                                 selectedRemoteButton = button
                             }

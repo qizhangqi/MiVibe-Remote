@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import Darwin
 import SwiftUI
 
@@ -46,7 +45,6 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
     private var statusMenu: NSMenu?
     private var settingsWindowController: NSWindowController?
     private var appUpdater: AppUpdater?
-    private var subscriptions = Set<AnyCancellable>()
     private var terminationSignalSources: [DispatchSourceSignal] = []
     private let connectionItem = NSMenuItem(title: "正在初始化蓝牙", action: nil, keyEquivalent: "")
     private let audioItem = NSMenuItem(title: "未选择语音输出设备", action: nil, keyEquivalent: "")
@@ -203,17 +201,11 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
     }
 
     private func observeModel() {
-        Publishers.CombineLatest4(
-            model.$connectionStatus,
-            model.$audioStatus,
-            model.$hidStatus,
-            model.$isStreaming
-        )
-        .receive(on: RunLoop.main)
-        .sink { [weak self] _ in
+        // refreshMenuStatus reads the four status properties; it runs again
+        // after any of them changes.
+        ObservationLoop.run { [weak self] in
             self?.refreshMenuStatus()
         }
-        .store(in: &subscriptions)
     }
 
     private func refreshMenuStatus() {

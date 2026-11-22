@@ -1,7 +1,7 @@
 import AppKit
-import Combine
 import CoreAudio
 import Foundation
+import Observation
 
 struct HIDPermissionSnapshot: Equatable {
     let inputMonitoringGranted: Bool
@@ -19,7 +19,8 @@ enum HIDPermissionRecoveryPolicy {
     }
 }
 
-final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
+@Observable
+final class BridgeAppModel: XiaomiBluetoothBridgeDelegate {
     static let voiceCaptureStartupDelay: TimeInterval = 0.20
     /// STOP and the final audio packets use different BLE characteristics, so
     /// briefly wait for already-sent tail packets before appending silence.
@@ -36,35 +37,35 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
 
     let settings = AppSettings()
 
-    @Published private(set) var connectionStatus = "正在初始化蓝牙"
-    @Published private(set) var hidStatus = "按键映射未启用"
-    @Published private(set) var audioStatus = "未选择语音输出设备"
-    @Published private(set) var doubaoAudioStatus = "正在检查豆包兼容音频设备"
-    @Published private(set) var isStreaming = false
-    @Published private(set) var activeRemoteButtons = Set<RemoteButton>()
-    @Published private(set) var audioDevices: [AudioDeviceInfo] = []
-    @Published private(set) var testToneStatus = "未选择语音输出设备"
-    @Published private(set) var isPlayingTestTone = false
-    @Published private(set) var voiceShortcutStatus = "正在准备语音快捷键"
-    @Published private(set) var isAudioReady = false
-    @Published private(set) var computerMicrophoneStatus = "正在准备 MacBook 麦克风"
+    private(set) var connectionStatus = "正在初始化蓝牙"
+    private(set) var hidStatus = "按键映射未启用"
+    private(set) var audioStatus = "未选择语音输出设备"
+    private(set) var doubaoAudioStatus = "正在检查豆包兼容音频设备"
+    private(set) var isStreaming = false
+    private(set) var activeRemoteButtons = Set<RemoteButton>()
+    private(set) var audioDevices: [AudioDeviceInfo] = []
+    private(set) var testToneStatus = "未选择语音输出设备"
+    private(set) var isPlayingTestTone = false
+    private(set) var voiceShortcutStatus = "正在准备语音快捷键"
+    private(set) var isAudioReady = false
+    private(set) var computerMicrophoneStatus = "正在准备 MacBook 麦克风"
 
     private let audioOutput = StableVirtualAudioOutput()
     private let defaultInputLease = DefaultInputDeviceLease()
-    private var testToneGeneration = 0
-    private var voiceFunctionKeyLatch = VoiceFunctionKeyLatch()
-    private var activeVoiceShortcutConfiguration: VoiceShortcutConfiguration?
-    private var voicePreRoll = VoiceAudioPreRoll(
+    @ObservationIgnored private var testToneGeneration = 0
+    @ObservationIgnored private var voiceFunctionKeyLatch = VoiceFunctionKeyLatch()
+    @ObservationIgnored private var activeVoiceShortcutConfiguration: VoiceShortcutConfiguration?
+    @ObservationIgnored private var voicePreRoll = VoiceAudioPreRoll(
         maximumSampleCount: BridgeAppModel.maximumVoicePreRollSamples
     )
-    private var voicePreRollReleaseWorkItem: DispatchWorkItem?
-    private var voiceStartGeneration: UInt64 = 0
-    private var voiceStopWorkItem: DispatchWorkItem?
-    private var voiceStopGeneration: UInt64 = 0
-    private var finalizedVoiceStopGeneration: UInt64?
+    @ObservationIgnored private var voicePreRollReleaseWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var voiceStartGeneration: UInt64 = 0
+    @ObservationIgnored private var voiceStopWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var voiceStopGeneration: UInt64 = 0
+    @ObservationIgnored private var finalizedVoiceStopGeneration: UInt64?
     private let keyHardwareSuppressor = RemoteKeyHardwareSuppressor()
-    private lazy var bluetoothBridge = XiaomiBluetoothBridge(settings: settings, delegate: self)
-    private lazy var hidMonitor: HIDRemoteMonitor = {
+    @ObservationIgnored private lazy var bluetoothBridge = XiaomiBluetoothBridge(settings: settings, delegate: self)
+    @ObservationIgnored private lazy var hidMonitor: HIDRemoteMonitor = {
         let monitor = HIDRemoteMonitor(settings: settings)
         monitor.onStatus = { [weak self] value in
             self?.hidStatus = value
@@ -92,32 +93,27 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         }
         return monitor
     }()
-    private var started = false
-    private var terminationObserver: NSObjectProtocol?
+    @ObservationIgnored private var started = false
+    @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     private let audioHardwareListenerQueue = DispatchQueue(label: "RemoteMic.audioHardware")
-    private var observedAudioHardwareAddresses: [AudioObjectPropertyAddress] = []
-    private var audioRecoveryWorkItem: DispatchWorkItem?
-    private var audioRecoveryGeneration: UInt64 = 0
-    private var cancellables = Set<AnyCancellable>()
-    private var lastHIDPermissionSnapshot: HIDPermissionSnapshot?
-    private lazy var audioHardwareListener: AudioObjectPropertyListenerBlock = { [weak self] count, addresses in
+    @ObservationIgnored private var observedAudioHardwareAddresses: [AudioObjectPropertyAddress] = []
+    @ObservationIgnored private var audioRecoveryWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var audioRecoveryGeneration: UInt64 = 0
+    @ObservationIgnored private var lastHIDPermissionSnapshot: HIDPermissionSnapshot?
+    @ObservationIgnored private lazy var audioHardwareListener: AudioObjectPropertyListenerBlock = { [weak self] count, addresses in
         let properties = Self.audioHardwarePropertyNames(count: count, addresses: addresses)
         self?.scheduleAudioRecovery(reason: "hardware_change", details: "properties=\(properties)")
     }
 
     init() {
-        voiceShortcutStatus = settings.voiceShortcutConfiguration.readyStatus
-        Publishers.CombineLatest3(
-            settings.$voiceShortcutProfile,
-            settings.$customVoiceShortcut,
-            settings.$customVoiceTriggerMode
-        )
-            .dropFirst()
-            .sink { [weak self] _ in
-                guard let self, !self.voiceFunctionKeyLatch.isHeld else { return }
-                self.voiceShortcutStatus = self.settings.voiceShortcutConfiguration.readyStatus
-            }
-            .store(in: &cancellables)
+        // Runs now and after each change to the voice shortcut settings. Read the
+        // settings before the latch check so the loop keeps tracking them.
+        ObservationLoop.run { [weak self] in
+            guard let self else { return }
+            let status = self.settings.voiceShortcutConfiguration.readyStatus
+            guard !self.voiceFunctionKeyLatch.isHeld else { return }
+            self.voiceShortcutStatus = status
+        }
         audioOutput.onConfigurationChange = { [weak self] in
             self?.scheduleAudioRecovery(reason: "engine_configuration_change")
         }

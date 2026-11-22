@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 enum VoiceShortcutProfile: String, CaseIterable, Codable, Equatable {
     case codex
@@ -133,7 +133,8 @@ struct VoiceShortcutConfiguration: Equatable {
     }
 }
 
-final class AppSettings: ObservableObject {
+@Observable
+final class AppSettings {
     private enum Keys {
         static let gainDB = "gainDB"
         static let selectedAudioDeviceUID = "selectedAudioDeviceUID"
@@ -157,44 +158,44 @@ final class AppSettings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    @Published var gainDB: Double {
+    var gainDB: Double {
         didSet { defaults.set(gainDB, forKey: Keys.gainDB) }
     }
 
-    @Published var selectedAudioDeviceUID: String {
+    var selectedAudioDeviceUID: String {
         didSet { defaults.set(selectedAudioDeviceUID, forKey: Keys.selectedAudioDeviceUID) }
     }
 
-    @Published var customMappingEnabled: Bool {
+    var customMappingEnabled: Bool {
         didSet { defaults.set(customMappingEnabled, forKey: Keys.customMappingEnabled) }
     }
 
-    @Published var voiceShortcutProfile: VoiceShortcutProfile {
+    var voiceShortcutProfile: VoiceShortcutProfile {
         didSet {
             defaults.set(voiceShortcutProfile.rawValue, forKey: Keys.voiceShortcutProfile)
             saveActiveLocalPresetIfNeeded()
         }
     }
 
-    @Published var customVoiceShortcut: CustomKeyboardShortcut? {
+    var customVoiceShortcut: CustomKeyboardShortcut? {
         didSet {
             saveCustomVoiceShortcut()
             saveActiveLocalPresetIfNeeded()
         }
     }
 
-    @Published var customVoiceTriggerMode: VoiceShortcutTriggerMode {
+    var customVoiceTriggerMode: VoiceShortcutTriggerMode {
         didSet {
             defaults.set(customVoiceTriggerMode.rawValue, forKey: Keys.customVoiceTriggerMode)
             saveActiveLocalPresetIfNeeded()
         }
     }
 
-    @Published var headsetCompatibilityEnabled: Bool {
+    var headsetCompatibilityEnabled: Bool {
         didSet { defaults.set(headsetCompatibilityEnabled, forKey: Keys.headsetCompatibilityEnabled) }
     }
 
-    @Published var computerMicrophonePassthroughEnabled: Bool {
+    var computerMicrophonePassthroughEnabled: Bool {
         didSet {
             defaults.set(
                 computerMicrophonePassthroughEnabled,
@@ -203,23 +204,23 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    @Published var buttonBindings: [RemoteButton: ButtonAction] {
+    var buttonBindings: [RemoteButton: ButtonAction] {
         didSet { saveBindings() }
     }
 
-    @Published var buttonShortcuts: [RemoteButton: CustomKeyboardShortcut] {
+    var buttonShortcuts: [RemoteButton: CustomKeyboardShortcut] {
         didSet { saveShortcuts() }
     }
 
-    @Published var secondaryButtonBindings: [RemoteButton: [ButtonTrigger: ConfiguredButtonAction]] {
+    var secondaryButtonBindings: [RemoteButton: [ButtonTrigger: ConfiguredButtonAction]] {
         didSet { saveSecondaryBindings() }
     }
 
-    @Published private(set) var localPresets: [LocalPreset] {
+    private(set) var localPresets: [LocalPreset] {
         didSet { saveLocalPresets() }
     }
 
-    @Published private(set) var activeLocalPresetID: UUID? {
+    private(set) var activeLocalPresetID: UUID? {
         didSet {
             if let activeLocalPresetID {
                 defaults.set(activeLocalPresetID.uuidString, forKey: Keys.activeLocalPresetID)
@@ -229,10 +230,10 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    private var customPresetBindings: [RemoteButton: ButtonAction]?
-    private var customPresetShortcuts: [RemoteButton: CustomKeyboardShortcut] = [:]
-    private var customPresetSecondaryBindings: [RemoteButton: [ButtonTrigger: ConfiguredButtonAction]] = [:]
-    private var isApplyingPreset = false
+    @ObservationIgnored private var customPresetBindings: [RemoteButton: ButtonAction]?
+    @ObservationIgnored private var customPresetShortcuts: [RemoteButton: CustomKeyboardShortcut] = [:]
+    @ObservationIgnored private var customPresetSecondaryBindings: [RemoteButton: [ButtonTrigger: ConfiguredButtonAction]] = [:]
+    @ObservationIgnored private var isApplyingPreset = false
 
     var peripheralIdentifier: UUID? {
         get {
