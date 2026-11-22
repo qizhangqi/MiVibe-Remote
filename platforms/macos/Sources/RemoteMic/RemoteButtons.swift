@@ -235,6 +235,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
     case chromeBeta
     case safari
     case zed
+    case doubaoWork
 
     var id: String { rawValue }
 
@@ -255,6 +256,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
         case .chromeBeta: return "Chrome Beta"
         case .safari: return "Safari"
         case .zed: return "Zed"
+        case .doubaoWork: return "豆包工作"
         }
     }
 
@@ -275,6 +277,7 @@ enum PresetApplication: String, CaseIterable, Identifiable {
         case .chromeBeta: return "com.google.Chrome.beta"
         case .safari: return "com.apple.Safari"
         case .zed: return "dev.zed.Zed"
+        case .doubaoWork: return "com.work.pc.doubao"
         }
     }
 
@@ -323,6 +326,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
     case openChromeBeta
     case openSafari
     case openZed
+    case openDoubaoWork
 
     var id: String { rawValue }
 
@@ -362,6 +366,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         case .openChromeBeta: return "打开 Chrome Beta"
         case .openSafari: return "打开 Safari"
         case .openZed: return "打开 Zed"
+        case .openDoubaoWork: return "打开豆包工作"
         }
     }
 
@@ -382,6 +387,7 @@ enum ButtonAction: String, CaseIterable, Codable, Identifiable {
         case .openChromeBeta: return .chromeBeta
         case .openSafari: return .safari
         case .openZed: return .zed
+        case .openDoubaoWork: return .doubaoWork
         default: return nil
         }
     }

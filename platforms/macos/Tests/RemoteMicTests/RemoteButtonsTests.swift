@@ -25,6 +25,7 @@ struct RemoteButtonsTests {
             "Chrome Beta": "com.google.Chrome.beta",
             "Safari": "com.apple.Safari",
             "Zed": "dev.zed.Zed",
+            "豆包工作": "com.work.pc.doubao",
         ])
         #expect(Set(ButtonAction.allCases.compactMap(\.presetApplication)) == Set(PresetApplication.allCases))
     }
@@ -103,6 +104,14 @@ struct RemoteButtonsTests {
             let encoded = try JSONEncoder().encode(action)
             #expect(try JSONDecoder().decode(ButtonAction.self, from: encoded) == action)
         }
+    }
+
+    @Test func doubaoWorkActionIsStoredAsOpenDoubaoWork() throws {
+        // Saved mappings store the raw value, so it must not change.
+        let action = try JSONDecoder().decode(ButtonAction.self, from: Data(#""openDoubaoWork""#.utf8))
+        #expect(action == .openDoubaoWork)
+        #expect(action.displayName == "打开豆包工作")
+        #expect(action.presetApplication == .doubaoWork)
     }
 
     @Test func customShortcutNormalizesDisplaysAndConvertsModifiers() throws {
