@@ -308,6 +308,95 @@ struct RemoteButtonsTests {
         #expect(restored.action(for: .power) == .openWeChat)
     }
 
+    @Test func savedMappingsSkipUnknownActionsInsteadOfResetting() throws {
+        let suiteName = "RemoteMicTests.unknownAction.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // Mappings saved by a build that knows an action this one doesn't.
+        defaults.set(
+            Data(#"{"ok":"escape","tv":"actionFromNewerVersion"}"#.utf8),
+            forKey: "buttonBindings"
+        )
+        defaults.set(
+            Data(#"""
+            {"menu":{"doubleClick":{"action":"returnKey"},
+                     "longPress":{"action":"actionFromNewerVersion"}}}
+            """#.utf8),
+            forKey: "secondaryButtonBindings"
+        )
+        defaults.set(
+            Data(#"""
+            [{"id":"\#(UUID().uuidString)","name":"写作",
+              "voiceShortcutProfile":"codex","customVoiceTriggerMode":"hold",
+              "buttonBindings":{"ok":"escape","tv":"actionFromNewerVersion"},
+              "buttonShortcuts":{},
+              "secondaryButtonBindings":{"menu":{"longPress":{"action":"actionFromNewerVersion"}}}}]
+            """#.utf8),
+            forKey: "localPresets"
+        )
+
+        let settings = AppSettings(defaults: defaults)
+
+        #expect(settings.action(for: .ok) == .escape)
+        #expect(settings.action(for: .tv) == AppSettings.defaultBindings[.tv])
+        #expect(settings.configuredAction(for: .menu, trigger: .doubleClick).action == .returnKey)
+        #expect(settings.configuredAction(for: .menu, trigger: .longPress) == .disabled)
+        #expect(settings.localPresets.map(\.name) == ["写作"])
+        #expect(settings.localPresets.first?.buttonBindings == ["ok": .escape])
+
+        // Applying the preset uses what was kept; the unknown entries stay off.
+        let preset = try #require(settings.localPresets.first)
+        settings.applyLocalPreset(id: preset.id)
+        #expect(settings.action(for: .ok) == .escape)
+        #expect(settings.action(for: .tv) == AppSettings.defaultBindings[.tv])
+        #expect(settings.configuredAction(for: .menu, trigger: .longPress) == .disabled)
+    }
+
+    @Test func legacyCustomPresetWithAnUnknownActionIsStillMigrated() throws {
+        let suiteName = "RemoteMicTests.unknownLegacyAction.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // Custom preset stored in the keys used before local presets existed.
+        defaults.set(
+            Data(#"{"ok":"escape","tv":"actionFromNewerVersion"}"#.utf8),
+            forKey: "customPresetBindings"
+        )
+        defaults.set(
+            Data(#"""
+            {"menu":{"doubleClick":{"action":"returnKey"},
+                     "longPress":{"action":"actionFromNewerVersion"}}}
+            """#.utf8),
+            forKey: "customPresetSecondaryBindings"
+        )
+
+        let settings = AppSettings(defaults: defaults)
+
+        let migrated = try #require(settings.localPresets.first)
+        #expect(settings.localPresets.count == 1)
+        #expect(migrated.name == "我的预设")
+        #expect(migrated.buttonBindings == ["ok": .escape])
+        #expect(migrated.secondaryButtonBindings.mapValues { $0.mapValues(\.action) } == [
+            "menu": ["doubleClick": .returnKey],
+        ])
+    }
+
+    @Test func malformedSavedMappingsStillFallBackAsAWhole() throws {
+        let suiteName = "RemoteMicTests.malformedMappings.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // Wrong shapes, not unknown actions: these are not skipped entry by entry.
+        defaults.set(Data(#"["ok","escape"]"#.utf8), forKey: "buttonBindings")
+        defaults.set(Data(#"{"menu":"returnKey"}"#.utf8), forKey: "secondaryButtonBindings")
+        defaults.set(Data(#"[{"name":"缺少其余字段"}]"#.utf8), forKey: "localPresets")
+        defaults.set(Data("not json".utf8), forKey: "customPresetBindings")
+
+        let settings = AppSettings(defaults: defaults)
+
+        #expect(settings.buttonBindings == AppSettings.defaultBindings)
+        #expect(settings.secondaryButtonBindings.isEmpty)
+        #expect(settings.localPresets.isEmpty)
+    }
+
     @Test func cyclePresetKeepsEveryConfiguredCycleTrigger() throws {
         let suiteName = "RemoteMicTests.cyclePreset.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
