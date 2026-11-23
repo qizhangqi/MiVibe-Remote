@@ -25,6 +25,9 @@ final class StableVirtualAudioOutput {
     private var builtInMicrophonePassthroughEnabled = false
     private var rejectedWriteCount = 0
     private var lastRejectedWriteLogDate = Date.distantPast
+    /// Mono frames for one render cycle; only touched on the output IO thread,
+    /// so render() does not allocate on the real-time thread.
+    private var renderScratch = UnsafeMutableBufferPointer<Float>.allocate(capacity: 4_096)
 
     private(set) var selectedDevice: AudioDeviceInfo?
     private(set) var status = "未选择语音输出设备"
@@ -39,6 +42,10 @@ final class StableVirtualAudioOutput {
             self?.onBuiltInMicrophoneStateChange?(state)
             AppLogger.shared.write("AUDIO BUILTIN_CAPTURE state=\(state.statusText)")
         }
+    }
+
+    deinit {
+        renderScratch.deallocate()
     }
 
     @discardableResult
@@ -282,13 +289,14 @@ final class StableVirtualAudioOutput {
         "\(basicDiagnosticState()) \(CoreAudioDeviceCatalog.routeDiagnostic())"
     }
 
-    private func enqueueBuiltIn(samples: [Float], sampleRate: Double) {
-        let resampled = Self.resample(
-            samples,
-            from: sampleRate,
-            to: Self.outputSampleRate
-        )
-        guard !resampled.isEmpty else { return }
+    /// Runs on the microphone's IO thread.
+    private func enqueueBuiltIn(samples: UnsafeBufferPointer<Float>, sampleRate: Double) {
+        guard !samples.isEmpty, sampleRate > 0 else { return }
+        // The built-in microphone normally runs at 48 kHz already; then the
+        // samples go straight into the queue without allocating anything.
+        let resampled: [Float]? = abs(sampleRate - Self.outputSampleRate) < 1
+            ? nil
+            : Self.resample(Array(samples), from: sampleRate, to: Self.outputSampleRate)
 
         stateLock.lock()
         guard !remoteActive, !testToneActive, outputIOProcID != nil else {
@@ -296,7 +304,11 @@ final class StableVirtualAudioOutput {
             return
         }
         compactPendingOutputLocked()
-        pendingOutput.append(contentsOf: resampled)
+        if let resampled {
+            pendingOutput.append(contentsOf: resampled)
+        } else {
+            pendingOutput.append(contentsOf: samples)
+        }
         trimPendingOutputLocked(maximumFrames: Self.maximumBuiltInQueueFrames)
         stateLock.unlock()
     }
@@ -310,16 +322,23 @@ final class StableVirtualAudioOutput {
             firstChannels
         guard frameCount > 0 else { return }
 
-        var mono = [Float](repeating: 0, count: frameCount)
+        if renderScratch.count < frameCount {
+            renderScratch.deallocate()
+            renderScratch = .allocate(capacity: frameCount)
+        }
+        let mono = UnsafeMutableBufferPointer(rebasing: renderScratch[0..<frameCount])
+        mono.update(repeating: 0)
         var completion: ((Bool) -> Void)?
         stateLock.lock()
         let available = pendingOutput.count - pendingOutputIndex
         if available > 0 {
             let take = min(frameCount, available)
-            mono.replaceSubrange(
-                0..<take,
-                with: pendingOutput[pendingOutputIndex..<(pendingOutputIndex + take)]
-            )
+            pendingOutput.withUnsafeBufferPointer { pending in
+                mono.baseAddress!.update(
+                    from: pending.baseAddress! + pendingOutputIndex,
+                    count: take
+                )
+            }
             pendingOutputIndex += take
             compactPendingOutputLocked()
         }

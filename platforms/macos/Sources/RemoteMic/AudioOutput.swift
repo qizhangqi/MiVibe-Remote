@@ -19,6 +19,42 @@ enum CoreAudioDeviceCatalog {
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    static func inputDevices() -> [AudioDeviceInfo] {
+        allDeviceIDs().compactMap { deviceID in
+            guard inputChannelCount(for: deviceID) > 0 else { return nil }
+            return deviceInfo(for: deviceID)
+        }
+    }
+
+    /// The format an input IOProc receives: the first input stream's virtual format.
+    static func inputStreamFormat(for deviceID: AudioDeviceID) -> AudioStreamBasicDescription? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr else {
+            return nil
+        }
+        var streamIDs = [AudioStreamID](
+            repeating: 0,
+            count: Int(size) / MemoryLayout<AudioStreamID>.size
+        )
+        guard !streamIDs.isEmpty,
+              AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &streamIDs) == noErr
+        else { return nil }
+
+        address.mSelector = kAudioStreamPropertyVirtualFormat
+        address.mScope = kAudioObjectPropertyScopeGlobal
+        var format = AudioStreamBasicDescription()
+        size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioObjectGetPropertyData(streamIDs[0], &address, 0, nil, &size, &format) == noErr else {
+            return nil
+        }
+        return format
+    }
+
     static func device(uid: String) -> AudioDeviceInfo? {
         allDeviceIDs()
             .compactMap(deviceInfo)
@@ -318,7 +354,7 @@ final class VirtualAudioOutput {
 
     init() {
         builtInCapture.onSamples = { [weak self] samples, sampleRate in
-            self?.enqueueBuiltIn(samples: samples, sampleRate: sampleRate)
+            self?.enqueueBuiltIn(samples: Array(samples), sampleRate: sampleRate)
         }
         builtInCapture.onStateChange = { [weak self] state in
             self?.onBuiltInMicrophoneStateChange?(state)
