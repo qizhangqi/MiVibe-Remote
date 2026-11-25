@@ -946,9 +946,10 @@ private struct MappingPage: View {
                 .font(.caption)
                 .frame(width: 38, alignment: .leading)
 
-            Picker("", selection: Binding(
-                get: { configured.action },
-                set: { action in
+            ActionPopUpButton(
+                current: configured.action,
+                installedBundleIdentifiers: installedApplicationBundleIdentifiers,
+                onPick: { action in
                     settings.setAction(action, for: button, trigger: trigger)
                     if action == .customShortcut {
                         shortcutEditingTarget = ShortcutEditingTarget(
@@ -957,18 +958,7 @@ private struct MappingPage: View {
                         )
                     }
                 }
-            )) {
-                ForEach(ButtonAction.pickerActions(
-                    installedBundleIdentifiers: installedApplicationBundleIdentifiers,
-                    current: configured.action
-                )) { action in
-                    let unavailable = action.presetApplication.map {
-                        !installedApplicationBundleIdentifiers.contains($0.bundleIdentifier)
-                    } ?? false
-                    Text(action.displayName + (unavailable ? "（未安装）" : "")).tag(action)
-                }
-            }
-            .labelsHidden()
+            )
             .frame(width: 150)
 
             if configured.action == .customShortcut {
@@ -1423,8 +1413,8 @@ private struct SecondaryPanelKey: Equatable {
 }
 
 /// One row of the mapping list. Equatable on its data so SwiftUI can skip the
-/// rows that did not change; every other row's Picker (about 30 menu items
-/// each) is otherwise rebuilt whenever anything in the settings window changes.
+/// rows that did not change; every other row's popup (about 30 menu items
+/// each) is otherwise updated whenever anything in the settings window changes.
 private struct MappingRow: View, Equatable {
     let button: RemoteButton
     let selected: Bool
@@ -1458,21 +1448,11 @@ private struct MappingRow: View, Equatable {
                 .buttonStyle(.plain)
                 .help("\(button.displayName) · HID \(String(format: "0x%02X", button.hidUsage))")
 
-                Picker("", selection: Binding(
-                    get: { currentAction },
-                    set: onPick
-                )) {
-                    ForEach(ButtonAction.pickerActions(
-                        installedBundleIdentifiers: installedBundleIdentifiers,
-                        current: currentAction
-                    )) { action in
-                        let unavailable = action.presetApplication.map {
-                            !installedBundleIdentifiers.contains($0.bundleIdentifier)
-                        } ?? false
-                        Text(action.displayName + (unavailable ? "（未安装）" : "")).tag(action)
-                    }
-                }
-                .labelsHidden()
+                ActionPopUpButton(
+                    current: currentAction,
+                    installedBundleIdentifiers: installedBundleIdentifiers,
+                    onPick: onPick
+                )
                 .frame(width: 112)
             }
 
@@ -1514,6 +1494,90 @@ private struct MappingRow: View, Equatable {
                 .padding(.leading, 8)
                 .opacity(selected ? 0 : 1)
         }
+    }
+}
+
+/// The action menu of a mapping row: an AppKit pop-up button with plain menu
+/// items. SwiftUI's Picker builds its menu from a ForEach of Text views (29 per
+/// menu, 14 menus) through the view graph; here the items are built once and
+/// rebuilt only when the list of options changes. Options, order and titles
+/// are the same as the Picker's.
+struct ActionPopUpButton: NSViewRepresentable {
+    let current: ButtonAction
+    let installedBundleIdentifiers: Set<String>
+    let onPick: (ButtonAction) -> Void
+
+    static func options(
+        current: ButtonAction,
+        installedBundleIdentifiers: Set<String>
+    ) -> [(action: ButtonAction, title: String)] {
+        ButtonAction.pickerActions(
+            installedBundleIdentifiers: installedBundleIdentifiers,
+            current: current
+        ).map { action in
+            let unavailable = action.presetApplication.map {
+                !installedBundleIdentifiers.contains($0.bundleIdentifier)
+            } ?? false
+            return (action, action.displayName + (unavailable ? "（未安装）" : ""))
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var actions: [ButtonAction] = []
+        var titles: [String] = []
+        var onPick: (ButtonAction) -> Void = { _ in }
+        /// The button's intrinsic size, measured again only when the items change.
+        var size: CGSize?
+
+        @objc func picked(_ sender: NSPopUpButton) {
+            let index = sender.indexOfSelectedItem
+            guard actions.indices.contains(index) else { return }
+            onPick(actions[index])
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        // Bezel, size, font and edge are already the Picker's; these two are not.
+        popup.autoenablesItems = false
+        (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtCenter
+        popup.target = context.coordinator
+        popup.action = #selector(Coordinator.picked(_:))
+        return popup
+    }
+
+    func updateNSView(_ popup: NSPopUpButton, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onPick = onPick
+        let options = Self.options(current: current, installedBundleIdentifiers: installedBundleIdentifiers)
+        let actions = options.map(\.action)
+        let titles = options.map(\.title)
+        if actions != coordinator.actions || titles != coordinator.titles {
+            // Items are added one by one: addItems(withTitles:) drops repeated titles.
+            popup.removeAllItems()
+            for title in titles {
+                popup.menu?.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+            }
+            coordinator.actions = actions
+            coordinator.titles = titles
+            coordinator.size = nil
+        }
+        if let index = actions.firstIndex(of: current), popup.indexOfSelectedItem != index {
+            popup.selectItem(at: index)
+        }
+    }
+
+    /// Takes the width it is offered (the row's fixed width) instead of the
+    /// width of its longest title; long titles are truncated, as before.
+    /// The intrinsic size is cached: NSButton measures every item's title for
+    /// it, and SwiftUI asks for sizes on every layout of the mapping page.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSPopUpButton, context: Context) -> CGSize? {
+        let coordinator = context.coordinator
+        let size = coordinator.size ?? nsView.intrinsicContentSize
+        coordinator.size = size
+        return CGSize(width: proposal.width ?? size.width, height: size.height)
     }
 }
 
