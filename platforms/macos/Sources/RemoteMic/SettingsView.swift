@@ -1479,17 +1479,16 @@ private struct MappingRow: View, Equatable {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
 
-        // One structure for both states: moving the selection only switches the
-        // glass and the divider, so the row's controls are not rebuilt and the
-        // mapping list is not laid out again.
+        // One structure for both states: moving the selection only changes the
+        // fill, the outline and the divider, so the row's controls are not
+        // rebuilt and the mapping list is not laid out again. A plain fill, not
+        // glass: switching glass on and off cost about 30 ms per selection move.
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let tint = Color.accentColor.opacity(0.10)
         VStack(spacing: 0) {
             content
-                .adaptiveTintedGlassRounded(
-                    cornerRadius: 12,
-                    tint: Color.accentColor.opacity(0.10),
-                    interactive: true,
-                    isActive: selected
-                )
+                .background(selected ? tint : .clear, in: shape)
+                .overlay(shape.stroke(selected ? tint.opacity(0.55) : .clear, lineWidth: 1))
             Divider()
                 .padding(.leading, 8)
                 .opacity(selected ? 0 : 1)
