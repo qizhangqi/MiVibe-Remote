@@ -107,6 +107,16 @@ private final class OffscreenSettingsWindow {
     }
 }
 
+/// The titles the SwiftUI Picker showed, in order (its ForEach, copied).
+private func previousPickerTitles(current: ButtonAction, installed: Set<String>) -> [String] {
+    ButtonAction.pickerActions(installedBundleIdentifiers: installed, current: current).map { action in
+        let unavailable = action.presetApplication.map {
+            !installed.contains($0.bundleIdentifier)
+        } ?? false
+        return action.displayName + (unavailable ? "（未安装）" : "")
+    }
+}
+
 @Suite("Settings window updates", .serialized)
 @MainActor
 struct SettingsWindowUpdateTests {
@@ -223,6 +233,65 @@ struct SettingsWindowUpdateTests {
                 settings.selectVoiceShortcutProfile(profile)
                 window.settle()
                 #expect(voicePicker()?.titleOfSelectedItem == profile.displayName)
+            }
+        }
+    }
+
+    @Test func everyMappingPopupOffersTheSameOptionsAsThePicker() throws {
+        try withRestoredStandardDefaults {
+            let model = BridgeAppModel()
+            let settings = model.settings
+            settings.customMappingEnabled = true
+            settings.applyWeChatPreset()
+            let window = OffscreenSettingsWindow(model: model)
+            defer { window.close() }
+            let installed = PresetApplication.installedBundleIdentifiers
+            let rows = window.rowPopups()
+            let secondary = allSubviews(window.hosting).compactMap { $0 as? NSPopUpButton }
+                .filter { abs($0.frame.width - 150) < 1 }
+            #expect(rows.count == 12)
+            #expect(secondary.count == 2) // double click, long press
+
+            for (button, popup) in zip(RemoteButton.allCases, rows) {
+                #expect(popup.itemTitles == previousPickerTitles(current: settings.action(for: button), installed: installed))
+                #expect(popup.itemArray.allSatisfy { $0.isEnabled })
+            }
+            for popup in secondary {
+                #expect(popup.itemTitles == previousPickerTitles(current: .disabled, installed: installed))
+            }
+
+            // Every option of a row can be picked, and the row shows it.
+            let up = try #require(rows.dropFirst().first)
+            let actions = ButtonAction.pickerActions(installedBundleIdentifiers: installed, current: settings.action(for: .up))
+            for (index, action) in actions.enumerated() {
+                up.menu?.performActionForItem(at: index)
+                window.settle()
+                #expect(settings.action(for: .up) == action)
+                #expect(up.titleOfSelectedItem == previousPickerTitles(current: action, installed: installed)[index])
+            }
+            #expect(actions.contains(.customShortcut))
+
+            // A secondary trigger too (the panel now shows the .up key).
+            let doubleClick = try #require(
+                allSubviews(window.hosting).compactMap { $0 as? NSPopUpButton }
+                    .filter { abs($0.frame.width - 150) < 1 }
+                    .max { $0.convert($0.bounds, to: nil).maxY < $1.convert($1.bounds, to: nil).maxY }
+            )
+            let arrowUp = try #require(doubleClick.itemTitles.firstIndex(of: ButtonAction.arrowUp.displayName))
+            doubleClick.menu?.performActionForItem(at: arrowUp)
+            window.settle()
+            #expect(settings.configuredAction(for: .up, trigger: .doubleClick).action == .arrowUp)
+        }
+    }
+
+    @Test func anUninstalledApplicationStaysListedOnlyWhileItIsTheCurrentAction() throws {
+        let appActions = ButtonAction.allCases.filter { $0.presetApplication != nil }
+        let appAction = try #require(appActions.first)
+        for installed in [Set<String>(), Set(appActions.compactMap { $0.presetApplication?.bundleIdentifier })] {
+            for current in [appAction, .escape] {
+                let options = ActionPopUpButton.options(current: current, installedBundleIdentifiers: installed)
+                #expect(options.map(\.title) == previousPickerTitles(current: current, installed: installed))
+                #expect(options.map(\.action) == ButtonAction.pickerActions(installedBundleIdentifiers: installed, current: current))
             }
         }
     }
