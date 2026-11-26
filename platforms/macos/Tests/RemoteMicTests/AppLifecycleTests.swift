@@ -35,6 +35,9 @@ struct AppLifecycleTests {
         #expect(appSource.contains("refreshMenuStatus()\n        showSettings()"))
         #expect(appSource.contains("styleMask: [.titled, .closable, .resizable]"))
         #expect(!appSource.contains(".miniaturizable"))
+        // SwiftUI does not size the settings window; window.minSize does.
+        #expect(appSource.contains("hostingController.sizingOptions = []"))
+        #expect(appSource.contains("window.minSize = NSSize(width: 800, height: 650)"))
         #expect(settingsSource.contains("Text(\"退出应用\")"))
         #expect(settingsSource.contains("NSApp.terminate(nil)"))
         #expect(!settingsSource.contains("NavigationSplitView"))
