@@ -74,6 +74,10 @@ final class StableVirtualAudioOutput {
             )
             return false
         }
+        // This IOProc only writes. Left on, Core Audio would also hand it the
+        // device's loopback input every cycle and run the app's microphone mode
+        // (e.g. Voice Isolation) on that input for nothing.
+        let inputOffStatus = IOProcInputStreams.turnOff(device: device.id, ioProcID: ioProcID)
 
         let startStatus = AudioDeviceStart(device.id, ioProcID)
         guard startStatus == noErr else {
@@ -92,7 +96,8 @@ final class StableVirtualAudioOutput {
         updateBuiltInMicrophoneCapture()
         AppLogger.shared.write(
             "AUDIO DIRECT_READY target={\(CoreAudioDeviceCatalog.deviceDiagnostic(device))} " +
-                "previous={\(previousState)} state={\(diagnosticState())}"
+                "previous={\(previousState)} state={\(diagnosticState())} " +
+                "input_off=\(inputOffStatus == noErr ? "ok" : "error \(inputOffStatus)")"
         )
         return true
     }
@@ -454,6 +459,58 @@ final class StableVirtualAudioOutput {
             output[index] = input[lower] + (input[upper] - input[lower]) * fraction
         }
         return output
+    }
+}
+
+/// The input half of `kAudioDevicePropertyIOProcStreamUsage`: which of a
+/// device's input streams Core Audio hands to one IOProc.
+enum IOProcInputStreams {
+    private static let countOffset = MemoryLayout<AudioHardwareIOProcStreamUsage>.offset(of: \.mNumberStreams)!
+    private static let flagsOffset = MemoryLayout<AudioHardwareIOProcStreamUsage>.offset(of: \.mStreamIsOn)!
+    private static let inputUsageAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyIOProcStreamUsage,
+        mScope: kAudioObjectPropertyScopeInput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    /// Whether each input stream is on for `ioProcID`; nil if Core Audio refuses.
+    static func areOn(device: AudioDeviceID, ioProcID: AudioDeviceIOProcID) -> [Bool]? {
+        usage(device: device, ioProcID: ioProcID)?.withUnsafeBytes { raw in
+            (0..<count(raw)).map { raw.load(fromByteOffset: flagsOffset + $0 * 4, as: UInt32.self) != 0 }
+        }
+    }
+
+    /// Stops Core Audio from handing `device`'s input to `ioProcID`.
+    static func turnOff(device: AudioDeviceID, ioProcID: AudioDeviceIOProcID) -> OSStatus {
+        guard var bytes = usage(device: device, ioProcID: ioProcID) else {
+            return kAudioHardwareUnspecifiedError
+        }
+        var address = inputUsageAddress
+        return bytes.withUnsafeMutableBytes { raw in
+            for index in 0..<count(UnsafeRawBufferPointer(raw)) {
+                raw.storeBytes(of: 0, toByteOffset: flagsOffset + index * 4, as: UInt32.self)
+            }
+            return AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(raw.count), raw.baseAddress!)
+        }
+    }
+
+    /// The property's bytes for `ioProcID`, which Core Audio reads from the first field.
+    private static func usage(device: AudioDeviceID, ioProcID: AudioDeviceIOProcID) -> [UInt8]? {
+        var address = inputUsageAddress
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr,
+              Int(size) >= flagsOffset else { return nil }
+        var bytes = [UInt8](repeating: 0, count: Int(size))
+        let status = bytes.withUnsafeMutableBytes { raw in
+            raw.storeBytes(of: unsafeBitCast(ioProcID, to: UnsafeMutableRawPointer.self), as: UnsafeMutableRawPointer.self)
+            return AudioObjectGetPropertyData(device, &address, 0, nil, &size, raw.baseAddress!)
+        }
+        return status == noErr ? bytes : nil
+    }
+
+    /// Streams listed in `raw`, capped by how many flags actually fit.
+    private static func count(_ raw: UnsafeRawBufferPointer) -> Int {
+        min(Int(raw.load(fromByteOffset: countOffset, as: UInt32.self)), (raw.count - flagsOffset) / 4)
     }
 }
 

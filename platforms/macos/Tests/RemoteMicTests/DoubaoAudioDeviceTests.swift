@@ -1,3 +1,4 @@
+import CoreAudio
 import Testing
 @testable import RemoteMic
 
@@ -16,6 +17,22 @@ struct DoubaoAudioDeviceTests {
             enabled: true,
             hasVirtualOutput: true
         ))
+    }
+
+    /// Needs the virtual microphone installed; returns early otherwise. The
+    /// IOProc is never started, so nothing is written to the device.
+    @Test func theVirtualMicrophonesInputCanBeTurnedOffForAnOutputIOProc() throws {
+        guard let device = DoubaoAudioDevicePolicy.device(in: CoreAudioDeviceCatalog.outputDevices()) else { return }
+        var procID: AudioDeviceIOProcID?
+        #expect(AudioDeviceCreateIOProcIDWithBlock(&procID, device.id, nil) { _, _, _, _, _ in } == noErr)
+        let ioProcID = try #require(procID)
+        defer { AudioDeviceDestroyIOProcID(device.id, ioProcID) }
+
+        let before = try #require(IOProcInputStreams.areOn(device: device.id, ioProcID: ioProcID))
+        #expect(!before.isEmpty)
+        #expect(before.allSatisfy { $0 })
+        #expect(IOProcInputStreams.turnOff(device: device.id, ioProcID: ioProcID) == noErr)
+        #expect(IOProcInputStreams.areOn(device: device.id, ioProcID: ioProcID) == before.map { _ in false })
     }
 
     @Test func appLifetimeInputLeaseRestoresTheUsersPreviousMicrophoneOnExit() {
