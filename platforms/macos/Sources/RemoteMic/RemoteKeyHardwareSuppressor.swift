@@ -124,7 +124,7 @@ enum RemoteKeyHardwareSuppressionPolicy {
         case .disabled, .scrollUp, .scrollDown, .showDesktop, .appSwitcher, .playPause, .customShortcut, .cyclePreset,
              .openRemoteMic, .openCodex, .openWorkBuddy, .openClaude, .openCmux, .openWeChat, .openCursor,
              .openXcode, .openSlack, .openWeCom, .openNeteaseMusic, .openChrome, .openChromeBeta, .openSafari,
-             .openZed:
+             .openZed, .openDoubaoWork:
             return nil
         }
         return usage(usageValue)
